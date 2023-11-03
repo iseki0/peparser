@@ -167,9 +167,9 @@ public class PEFile implements AutoCloseable {
     private static SectionHeader readSectionHeader(byte[] data, int off) {
         var nameLen = 0;
         for (; nameLen < 8; nameLen++) {
-            if (data[nameLen] == 0) break;
+            if (data[nameLen + off] == 0) break;
         }
-        String name = new String(data, 0, nameLen, StandardCharsets.UTF_8);
+        String name = new String(data, off, nameLen, StandardCharsets.UTF_8);
         int virtualSize = (int) INT_LE_AH.get(data, off + 8);
         int virtualAddress = (int) INT_LE_AH.get(data, off + 12);
         int sizeOfRawData = (int) INT_LE_AH.get(data, off + 16);
