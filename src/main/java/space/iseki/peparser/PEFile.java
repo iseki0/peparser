@@ -65,8 +65,7 @@ public class PEFile implements AutoCloseable {
             for (int i = 0; i < coffHeader.numbersOfSections(); i++) {
                 sections[i] = readSectionHeader(sectionData, i * SectionHeader.LENGTH);
             }
-            var pe = new PEFile(coffHeader, optionalHeader, raf, List.of(sections));
-            return pe;
+            return new PEFile(coffHeader, optionalHeader, raf, List.of(sections));
         } catch (Throwable th) {
             try {
                 raf.close();
