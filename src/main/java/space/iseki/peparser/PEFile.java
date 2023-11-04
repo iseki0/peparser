@@ -2,7 +2,6 @@ package space.iseki.peparser;
 
 import org.jetbrains.annotations.NotNull;
 
-import java.io.DataInput;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -11,27 +10,8 @@ import java.lang.invoke.VarHandle;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
-
-
-interface Section {
-    /**
-     * @see DataInput#readFully(byte[])
-     */
-    default void readFully(byte[] b) throws IOException {
-        readFully(b, 0, b.length);
-    }
-
-    /**
-     * @see DataInput#readFully(byte[], int, int)
-     */
-    void readFully(byte[] b, int off, int len) throws IOException;
-
-    /**
-     * @see DataInput#skipBytes(int)
-     */
-    int skipBytes(int n) throws IOException;
-}
 
 
 public class PEFile implements AutoCloseable {
@@ -48,12 +28,15 @@ public class PEFile implements AutoCloseable {
     private final OptionalHeader optionalHeader;
     private final List<SectionHeader> sections;
     private final RandomAccessFile raf;
+    private final List<ResourceTreeNode> resourceTreeNodes;
 
-    private PEFile(CoffHeader coffHeader, OptionalHeader optionalHeader, RandomAccessFile raf, List<SectionHeader> sections) {
+    private PEFile(CoffHeader coffHeader, OptionalHeader optionalHeader, RandomAccessFile raf, List<SectionHeader> sections) throws IOException {
         this.coffHeader = coffHeader;
         this.optionalHeader = optionalHeader;
         this.raf = raf;
         this.sections = sections;
+        var rsrc = sections.stream().filter(i -> i.name().equals(".rsrc")).findFirst().orElse(null);
+        this.resourceTreeNodes = rsrc == null ? Collections.emptyList() : List.of(readRsrcNode(rsrc.pointerToRawData(), rsrc.pointerToRawData(), 0));
     }
 
     /**
@@ -82,7 +65,8 @@ public class PEFile implements AutoCloseable {
             for (int i = 0; i < coffHeader.numbersOfSections(); i++) {
                 sections[i] = readSectionHeader(sectionData, i * SectionHeader.LENGTH);
             }
-            return new PEFile(coffHeader, optionalHeader, raf, List.of(sections));
+            var pe = new PEFile(coffHeader, optionalHeader, raf, List.of(sections));
+            return pe;
         } catch (Throwable th) {
             try {
                 raf.close();
@@ -192,6 +176,75 @@ public class PEFile implements AutoCloseable {
         return new ResourceDirectoryTable(characteristic, timeDateStamp, majorVersion, minorVersion, numberOfNameEntries, numberOfIdEntries);
     }
 
+    private static ResourceData readResourceData(byte[] bytes, int off) {
+        return new ResourceData((Integer) INT_LE_AH.get(bytes, off), (Integer) INT_LE_AH.get(bytes, off + 4), (Integer) INT_LE_AH.get(bytes, off + 8));
+    }
+
+    private ResourceTreeNode[] readRsrcNode(long base, long posToTable, int depth) throws IOException {
+        if (depth > 2) {
+            throw new IllegalStateException("too deep, Windows only use three level resources");
+        }
+        assert depth >= 0;
+        assert base >= 0;
+        assert posToTable >= base;
+        raf.seek(posToTable);
+        var b16 = new byte[16];
+        raf.readFully(b16);
+        var table = readResourceDirectoryTable(b16, 0);
+        int numberOfNameEntries = table.numberOfNameEntries() & SHORT_MASK;
+        int numberOfIdEntries = table.numberOfIdEntries() & SHORT_MASK;
+        int totalEntries = numberOfNameEntries + numberOfIdEntries;
+        var entryDataBuffer = new byte[8 * totalEntries];
+        raf.readFully(entryDataBuffer);
+        // read name
+        var nameList = new String[numberOfNameEntries];
+        for (int i = 0; i < nameList.length; i++) {
+            // i * 8, the first field
+            var nameOffset = (int) INT_LE_AH.get(entryDataBuffer, i * 8) & INT_MASK;
+            // clear high bit
+            nameOffset = nameOffset & Integer.MAX_VALUE;
+            // calculate address
+            nameOffset += base;
+            raf.seek(nameOffset);
+            // read string length, but in BE
+            var len = raf.readUnsignedShort();
+            // convert to LE
+            len = (len & 0xff00) >> 8 | (len & 0xff) << 8;
+            len = len * 2;
+            // prepare buffer and read string content
+            var nameBuffer = new byte[len];
+            raf.readFully(nameBuffer);
+            nameList[i] = new String(nameBuffer, StandardCharsets.UTF_16LE);
+        }
+        var treeNodes = new ResourceTreeNode[totalEntries];
+        var rdBuf = new byte[12];
+        for (int i = 0; i < totalEntries; i++) {
+            // i * 8 + 4, the second field, if the highest bit is 1, the integer will be negative .
+            long offset = (int) INT_LE_AH.get(entryDataBuffer, i * 8 + 4);
+            // high bit 0, leaf
+            var isLeaf = offset >= 0;
+            // clear high bit 1
+            offset = offset & Integer.MAX_VALUE;
+            var isNameNode = i < numberOfNameEntries;
+            // named node without id
+            var id = isNameNode ? 0 : (int) INT_LE_AH.get(entryDataBuffer, i * 8);
+            // otherwise use name
+            var name = isNameNode ? nameList[i] : null;
+            if (isLeaf) {
+                var rdOffset = base + offset;
+                raf.seek(rdOffset);
+                raf.readFully(rdBuf);
+                var rd = readResourceData(rdBuf, 0);
+                treeNodes[i] = new ResourceTreeNode(Collections.emptyList(), name, id, rd);
+                continue;
+            }
+            // not leaf, recursive
+            var children = List.of(readRsrcNode(base, offset + base, depth + 1));
+            treeNodes[i] = new ResourceTreeNode(children, name, id, null);
+        }
+        return treeNodes;
+    }
+
     /**
      * Get parsed COFF header.
      */
@@ -215,45 +268,14 @@ public class PEFile implements AutoCloseable {
         return sections;
     }
 
+    public @NotNull List<ResourceTreeNode> getResourceTree() {
+        return resourceTreeNodes;
+    }
+
     @Override
     public void close() throws Exception {
         this.raf.close();
     }
+
 }
 
-final class IntReader {
-    private static final VarHandle INT_LE_AH = MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.LITTLE_ENDIAN);
-    private static final VarHandle SHORT_LE_AH = MethodHandles.byteArrayViewVarHandle(short[].class, ByteOrder.LITTLE_ENDIAN);
-    private static final VarHandle LONG_LE_AH = MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.LITTLE_ENDIAN);
-
-
-    byte[] data;
-    int off;
-
-    IntReader(byte[] data, int off) {
-        this.data = data;
-        this.off = off;
-    }
-
-    int readInt() {
-        var i = (int) INT_LE_AH.get(data, off);
-        off += 4;
-        return i;
-    }
-
-    short readShort() {
-        var i = (short) SHORT_LE_AH.get(data, off);
-        off += 2;
-        return i;
-    }
-
-    int readByte() {
-        return data[off++] & 0xff;
-    }
-
-    long readLong() {
-        var i = (long) LONG_LE_AH.get(data, off);
-        off += 8;
-        return i;
-    }
-}
