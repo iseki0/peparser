@@ -177,7 +177,7 @@ public class PEFile implements AutoCloseable {
     }
 
     private static ResourceData readResourceData(byte[] bytes, int off) {
-        return new ResourceData((Integer) INT_LE_AH.get(bytes, off), (Integer) INT_LE_AH.get(bytes, off + 4), (Integer) INT_LE_AH.get(bytes, off + 8));
+        return new ResourceData((int) INT_LE_AH.get(bytes, off), (int) INT_LE_AH.get(bytes, off + 4), (int) INT_LE_AH.get(bytes, off + 8));
     }
 
     private ResourceTreeNode[] readRsrcNode(long base, long posToTable, int depth) throws IOException {
