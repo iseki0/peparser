@@ -3,6 +3,9 @@ package space.iseki.peparser;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Arrays;
+import java.util.List;
+
 public record OptionalHeader(boolean pe32Plus,
                              int majorLinkerVersion,
                              int minorLinkerVersion,
@@ -50,6 +53,10 @@ public record OptionalHeader(boolean pe32Plus,
 
     public boolean contains(DllCharacteristic dllCharacteristic) {
         return (this.dllCharacteristics & dllCharacteristic.value) != 0;
+    }
+
+    public List<DllCharacteristic> getDllCharacteristicList(){
+        return Arrays.stream(DllCharacteristic.values()).filter(this::contains).toList();
     }
 
     public @Nullable WindowsSubsystem getWindowsSubsystem() {

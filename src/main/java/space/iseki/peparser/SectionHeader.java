@@ -1,5 +1,8 @@
 package space.iseki.peparser;
 
+import java.util.Arrays;
+import java.util.List;
+
 public record SectionHeader(String name,
                             int virtualSize,
                             int virtualAddress,
@@ -14,5 +17,9 @@ public record SectionHeader(String name,
 
     public boolean contains(SectionFlag sectionFlag) {
         return (sectionFlag.value & this.characteristics) != 0;
+    }
+
+    public List<SectionFlag> getSectionFlagList() {
+        return Arrays.stream(SectionFlag.values()).filter(this::contains).toList();
     }
 }

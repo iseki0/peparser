@@ -4,6 +4,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.time.Instant;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Optional;
 
 public record CoffHeader(short machine,
@@ -27,6 +29,10 @@ public record CoffHeader(short machine,
 
     public boolean contains(Characteristic characteristic) {
         return (characteristic.value & characteristics) != 0;
+    }
+
+    public List<Characteristic> getCharacteristicList() {
+        return Arrays.stream(Characteristic.values()).filter(this::contains).toList();
     }
 
 }
