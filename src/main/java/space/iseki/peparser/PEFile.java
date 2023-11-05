@@ -28,6 +28,7 @@ public class PEFile implements AutoCloseable {
     private final OptionalHeader optionalHeader;
     private final List<SectionHeader> sections;
     private final RandomAccessFile raf;
+    private final SectionHeader rsrcHeader;
     private final List<ResourceTreeNode> resourceTreeNodes;
 
     private PEFile(CoffHeader coffHeader, OptionalHeader optionalHeader, RandomAccessFile raf, List<SectionHeader> sections) throws IOException {
@@ -35,8 +36,8 @@ public class PEFile implements AutoCloseable {
         this.optionalHeader = optionalHeader;
         this.raf = raf;
         this.sections = sections;
-        var rsrc = sections.stream().filter(i -> i.name().equals(".rsrc")).findFirst().orElse(null);
-        this.resourceTreeNodes = rsrc == null ? Collections.emptyList() : List.of(readRsrcNode(rsrc.pointerToRawData(), rsrc.pointerToRawData(), 0));
+        this.rsrcHeader = sections.stream().filter(i -> i.name().equals(".rsrc")).findFirst().orElse(null);
+        this.resourceTreeNodes = rsrcHeader == null ? Collections.emptyList() : List.of(readRsrcNode(rsrcHeader.pointerToRawData(), rsrcHeader.pointerToRawData(), 0));
     }
 
     /**
@@ -177,6 +178,30 @@ public class PEFile implements AutoCloseable {
 
     private static ResourceData readResourceData(byte[] bytes, int off) {
         return new ResourceData((int) INT_LE_AH.get(bytes, off), (int) INT_LE_AH.get(bytes, off + 4), (int) INT_LE_AH.get(bytes, off + 8));
+    }
+
+    /**
+     * Get the resource data associated with the node.
+     *
+     * @param node the node
+     * @return the data
+     * @throws IllegalArgumentException if the node is not a leaf or the node is bad(the address is invalid).
+     * @throws NullPointerException     if {@code node} is null or this file hasn't {@code .rsrc} section.
+     * @throws IOException              underlying I/O exception
+     */
+    public byte @NotNull [] getResourceData(@NotNull ResourceTreeNode node) throws IOException {
+        if (node.resourceData() == null) {
+            throw new IllegalArgumentException("the node is not a leaf");
+        }
+        var baseVA = rsrcHeader.virtualAddress() & INT_MASK;
+        var fileOffset = rsrcHeader.pointerToRawData() & INT_MASK;
+        var diff = baseVA - fileOffset;
+        var resourceInFileOffset = (node.resourceData().rva() & INT_MASK) - diff;
+        if (resourceInFileOffset < 0) throw new IllegalArgumentException("resourceInFileOffset < 0");
+        raf.seek(resourceInFileOffset);
+        var buffer = new byte[node.resourceData().size()];
+        raf.readFully(buffer);
+        return buffer;
     }
 
     private ResourceTreeNode[] readRsrcNode(long base, long posToTable, int depth) throws IOException {
