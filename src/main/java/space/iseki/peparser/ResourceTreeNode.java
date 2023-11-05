@@ -1,10 +1,19 @@
 package space.iseki.peparser;
 
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
 
-public record ResourceTreeNode(List<ResourceTreeNode> children,
+/**
+ * Represents a resource in the resource tree({@code .rsrc} section)
+ *
+ * @param children the list must be immutable, for leaf node, the field will be an empty list
+ * @param name will be null if the node hasn't a name(ID resource)
+ * @param id will be zero if the node has a name(Name resource)
+ * @param resourceData the resource data record, will be null if the node is not a leaf
+ */
+public record ResourceTreeNode(@NotNull List<@NotNull ResourceTreeNode> children,
                                @Nullable String name,
                                int id,
                                @Nullable ResourceData resourceData) {
@@ -30,5 +39,4 @@ public record ResourceTreeNode(List<ResourceTreeNode> children,
         return b.toString();
     }
 }
-
 

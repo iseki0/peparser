@@ -2,6 +2,7 @@ package space.iseki.peparser;
 
 import org.jetbrains.annotations.NotNull;
 
+import java.io.EOFException;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -13,7 +14,13 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
-
+/**
+ * Used to read PE file.
+ *
+ * <p>
+ * Instance of this class is <em>not thread-safe</em>
+ * </p>
+ */
 public class PEFile implements AutoCloseable {
     public static final int PE_SIGNATURE_OFFSET = 0x3c;
     public static final short PE32 = 0x010b;
@@ -44,29 +51,36 @@ public class PEFile implements AutoCloseable {
      * Open a PE file.
      *
      * @param file the PE file
+     * @throws IOException          the underlying I/O exception
+     * @throws NullPointerException if any argument is null
+     * @throws PEFileException      reading PE file failed, the PE file might be invalid
      */
     public static @NotNull PEFile open(@NotNull File file) throws IOException {
         var raf = new RandomAccessFile(file, "r");
         try {
-            raf.seek(PE_SIGNATURE_OFFSET);
-            var b4 = new byte[4];
-            raf.readFully(b4);
-            var positionToSignature = (int) INT_LE_AH.get(b4, 0) & INT_MASK;
-            raf.seek(positionToSignature);
-            var coffHeaderData = new byte[CoffHeader.LENGTH + 4];
-            raf.readFully(coffHeaderData);
-            if (!checkPESignature(coffHeaderData)) throw new IllegalArgumentException("PE signature not match");
-            CoffHeader coffHeader = readCoffHeader(coffHeaderData, 4);
-            var optionalHeaderData = new byte[coffHeader.sizeOfOptionalHeader()];
-            raf.readFully(optionalHeaderData);
-            OptionalHeader optionalHeader = readOptionalHeader(optionalHeaderData, 0);
-            var sections = new SectionHeader[coffHeader.numbersOfSections()];
-            var sectionData = new byte[SectionHeader.LENGTH * sections.length];
-            raf.readFully(sectionData);
-            for (int i = 0; i < coffHeader.numbersOfSections(); i++) {
-                sections[i] = readSectionHeader(sectionData, i * SectionHeader.LENGTH);
+            try {
+                raf.seek(PE_SIGNATURE_OFFSET);
+                var b4 = new byte[4];
+                raf.readFully(b4);
+                var positionToSignature = (int) INT_LE_AH.get(b4, 0) & INT_MASK;
+                raf.seek(positionToSignature);
+                var coffHeaderData = new byte[CoffHeader.LENGTH + 4];
+                raf.readFully(coffHeaderData);
+                if (!checkPESignature(coffHeaderData)) throw new IllegalArgumentException("PE signature not match");
+                CoffHeader coffHeader = readCoffHeader(coffHeaderData, 4);
+                var optionalHeaderData = new byte[coffHeader.sizeOfOptionalHeader()];
+                raf.readFully(optionalHeaderData);
+                OptionalHeader optionalHeader = readOptionalHeader(optionalHeaderData, 0);
+                var sections = new SectionHeader[coffHeader.numbersOfSections()];
+                var sectionData = new byte[SectionHeader.LENGTH * sections.length];
+                raf.readFully(sectionData);
+                for (int i = 0; i < coffHeader.numbersOfSections(); i++) {
+                    sections[i] = readSectionHeader(sectionData, i * SectionHeader.LENGTH);
+                }
+                return new PEFile(coffHeader, optionalHeader, raf, List.of(sections));
+            } catch (EOFException | IndexOutOfBoundsException | IllegalArgumentException e) {
+                throw new PEFileException(e);
             }
-            return new PEFile(coffHeader, optionalHeader, raf, List.of(sections));
         } catch (Throwable th) {
             try {
                 raf.close();
@@ -292,6 +306,14 @@ public class PEFile implements AutoCloseable {
         return sections;
     }
 
+    /**
+     * Get the resource tree({@code .rsrc} section).
+     * <p>
+     * If this file hasn't {@code .rsrc} section, the list will be empty.
+     * </p>
+     *
+     * @return the list of root nodes or empty, unmodifiable.
+     */
     public @NotNull List<ResourceTreeNode> getResourceTree() {
         return resourceTreeNodes;
     }
